@@ -3,6 +3,7 @@ from flask_cors import CORS
 import yt_dlp
 import requests
 import logging
+import re
 
 app = Flask(__name__)
 CORS(app)
@@ -19,7 +20,7 @@ def home():
     return jsonify({
         'status': 'ok',
         'message': 'Video Extractor API is running',
-        'version': '3.0.0 - New YouTube API'
+        'version': '3.1.0 - Fixed YouTube API'
     })
 
 def is_youtube_url(url):
@@ -29,8 +30,6 @@ def is_youtube_url(url):
 
 def extract_youtube_video_id(url):
     """Extract video ID from YouTube URL"""
-    import re
-    
     patterns = [
         r'(?:v=|\/)([0-9A-Za-z_-]{11}).*',
         r'(?:embed\/)([0-9A-Za-z_-]{11})',
@@ -44,9 +43,9 @@ def extract_youtube_video_id(url):
     return None
 
 def extract_with_rapidapi(url):
-    """Extract YouTube video using NEW RapidAPI - YouTube Media Downloader"""
+    """Extract YouTube video using YouTube Media Downloader API"""
     try:
-        logger.info(f"Using NEW RapidAPI for YouTube: {url}")
+        logger.info(f"Using YouTube Media Downloader API for: {url}")
         
         # Extract video ID
         video_id = extract_youtube_video_id(url)
@@ -56,66 +55,87 @@ def extract_with_rapidapi(url):
         
         logger.info(f"Video ID: {video_id}")
         
-        # NEW API endpoint
-        api_url = f"https://youtube-media-downloader.p.rapidapi.com/v2/video/details"
+        # Get video info first
+        info_url = "https://youtube-media-downloader.p.rapidapi.com/v2/video/details"
         
         headers = {
             "x-rapidapi-key": RAPIDAPI_KEY,
             "x-rapidapi-host": RAPIDAPI_HOST
         }
         
-        params = {
-            "videoId": video_id
-        }
+        params = {"videoId": video_id}
         
-        response = requests.get(api_url, headers=headers, params=params, timeout=30)
+        info_response = requests.get(info_url, headers=headers, params=params, timeout=30)
         
-        logger.info(f"RapidAPI Status: {response.status_code}")
-        logger.info(f"RapidAPI Response: {response.text[:500]}")
+        logger.info(f"Info API Status: {info_response.status_code}")
         
-        if response.status_code == 200:
-            data = response.json()
-            
-            # Parse response
-            title = data.get('title', 'YouTube Video')
-            thumbnail = data.get('thumbnail', {}).get('url')
-            
-            # Get video formats
-            formats = data.get('formats', [])
-            
-            if formats:
-                # Find best quality with audio
-                best_format = None
-                
-                for fmt in formats:
-                    if fmt.get('hasAudio') and fmt.get('hasVideo'):
-                        if not best_format or fmt.get('quality', 0) > best_format.get('quality', 0):
-                            best_format = fmt
-                
-                # If no combined format, try video-only
-                if not best_format:
-                    for fmt in formats:
-                        if fmt.get('hasVideo'):
-                            best_format = fmt
-                            break
-                
-                if best_format:
-                    return {
-                        'success': True,
-                        'title': title,
-                        'thumbnail': thumbnail,
-                        'downloadUrl': best_format.get('url'),
-                        'quality': best_format.get('qualityLabel', 'HD'),
-                        'extension': best_format.get('mimeType', 'mp4').split('/')[-1].split(';')[0],
-                        'duration': data.get('lengthSeconds', 0),
-                        'filesize': best_format.get('contentLength', 0),
-                        'source': 'rapidapi-new'
-                    }
+        if info_response.status_code != 200:
+            logger.error(f"Info API failed: {info_response.text[:200]}")
+            return None
+        
+        info_data = info_response.json()
+        logger.info(f"Info Response: {str(info_data)[:300]}")
+        
+        # Check if video is available
+        if info_data.get('errorId') != 'Success':
+            logger.error(f"Video error: {info_data.get('errorId')}")
+            return None
+        
+        title = info_data.get('title', 'YouTube Video')
+        
+        # Get download links
+        download_url = "https://youtube-media-downloader.p.rapidapi.com/v2/video/download"
+        
+        download_response = requests.get(download_url, headers=headers, params=params, timeout=30)
+        
+        logger.info(f"Download API Status: {download_response.status_code}")
+        
+        if download_response.status_code != 200:
+            logger.error(f"Download API failed: {download_response.text[:200]}")
+            return None
+        
+        download_data = download_response.json()
+        logger.info(f"Download Response: {str(download_data)[:500]}")
+        
+        # Extract download links
+        links = download_data.get('links', [])
+        
+        if not links:
+            logger.error("No download links found")
+            return None
+        
+        # Find best quality with audio
+        best_link = None
+        
+        # Priority: MP4 with highest quality
+        for link in links:
+            if link.get('format') == 'mp4':
+                if not best_link or link.get('quality', 0) > best_link.get('quality', 0):
+                    best_link = link
+        
+        # Fallback to any format
+        if not best_link and links:
+            best_link = links[0]
+        
+        if best_link:
+            return {
+                'success': True,
+                'title': title,
+                'thumbnail': info_data.get('thumbnail'),
+                'downloadUrl': best_link.get('url'),
+                'quality': f"{best_link.get('quality', 'HD')}",
+                'extension': best_link.get('format', 'mp4'),
+                'duration': info_data.get('duration', 0),
+                'filesize': best_link.get('size', 0),
+                'source': 'rapidapi-youtube'
+            }
         
         return None
         
     except Exception as e:
-        logger.error(f"NEW RapidAPI error: {str(e)}")
+        logger.error(f"YouTube API error: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
         return None
 
 def extract_with_ytdlp(url):
@@ -167,23 +187,23 @@ def extract_video():
         
         # Route based on platform
         if is_youtube_url(url):
-            # Try NEW RapidAPI for YouTube
+            # Try YouTube Media Downloader API
             result = extract_with_rapidapi(url)
             
             if result:
-                logger.info("Success via NEW RapidAPI")
+                logger.info(f"Success via YouTube API: {result.get('title')}")
                 return jsonify(result)
             else:
                 return jsonify({
                     'success': False,
-                    'error': 'YouTube extraction failed. Video may be private or unavailable.'
+                    'error': 'YouTube extraction failed. Video may be private, restricted, or unavailable.'
                 }), 500
         else:
             # Use yt-dlp for other platforms
             result = extract_with_ytdlp(url)
             
             if result:
-                logger.info("Success via yt-dlp")
+                logger.info(f"Success via yt-dlp: {result.get('title')}")
                 return jsonify(result)
             else:
                 return jsonify({
@@ -193,6 +213,8 @@ def extract_video():
     
     except Exception as e:
         logger.error(f"Error: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
         return jsonify({
             'success': False,
             'error': str(e)
