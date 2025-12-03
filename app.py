@@ -10,15 +10,16 @@ CORS(app)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-RAPIDAPI_KEY = "8323c19993msh133999b087688ffp15533fjsn39a277015a81"  # ✅ New
-RAPIDAPI_HOST = "youtube-media-downloader.p.rapidapi.com"  # ✅ New - Different API!
+# NEW RapidAPI credentials - YouTube Media Downloader
+RAPIDAPI_KEY = "8323c19993msh133999b087688ffp15533fjsn39a277015a81"
+RAPIDAPI_HOST = "youtube-media-downloader.p.rapidapi.com"
 
 @app.route('/')
 def home():
     return jsonify({
         'status': 'ok',
         'message': 'Video Extractor API is running',
-        'version': '2.0.0 - Hybrid'
+        'version': '3.0.0 - New YouTube API'
     })
 
 def is_youtube_url(url):
@@ -26,49 +27,95 @@ def is_youtube_url(url):
     youtube_domains = ['youtube.com', 'youtu.be', 'm.youtube.com']
     return any(domain in url.lower() for domain in youtube_domains)
 
+def extract_youtube_video_id(url):
+    """Extract video ID from YouTube URL"""
+    import re
+    
+    patterns = [
+        r'(?:v=|\/)([0-9A-Za-z_-]{11}).*',
+        r'(?:embed\/)([0-9A-Za-z_-]{11})',
+        r'^([0-9A-Za-z_-]{11})$'
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if match:
+            return match.group(1)
+    return None
+
 def extract_with_rapidapi(url):
-    """Extract YouTube video using RapidAPI"""
+    """Extract YouTube video using NEW RapidAPI - YouTube Media Downloader"""
     try:
-        logger.info(f"Using RapidAPI for YouTube: {url}")
+        logger.info(f"Using NEW RapidAPI for YouTube: {url}")
         
-        api_url = "https://social-download-all-in-one.p.rapidapi.com/v1/social/autolink"
+        # Extract video ID
+        video_id = extract_youtube_video_id(url)
+        if not video_id:
+            logger.error("Could not extract video ID")
+            return None
+        
+        logger.info(f"Video ID: {video_id}")
+        
+        # NEW API endpoint
+        api_url = f"https://youtube-media-downloader.p.rapidapi.com/v2/video/details"
         
         headers = {
             "x-rapidapi-key": RAPIDAPI_KEY,
-            "x-rapidapi-host": RAPIDAPI_HOST,
-            "Content-Type": "application/json"
+            "x-rapidapi-host": RAPIDAPI_HOST
         }
         
-        payload = {"url": url}
+        params = {
+            "videoId": video_id
+        }
         
-        response = requests.post(api_url, json=payload, headers=headers, timeout=30)
+        response = requests.get(api_url, headers=headers, params=params, timeout=30)
+        
+        logger.info(f"RapidAPI Status: {response.status_code}")
+        logger.info(f"RapidAPI Response: {response.text[:500]}")
         
         if response.status_code == 200:
             data = response.json()
             
-            if data.get('status') == 'success':
-                medias = data.get('medias', [])
+            # Parse response
+            title = data.get('title', 'YouTube Video')
+            thumbnail = data.get('thumbnail', {}).get('url')
+            
+            # Get video formats
+            formats = data.get('formats', [])
+            
+            if formats:
+                # Find best quality with audio
+                best_format = None
                 
-                if medias:
-                    # Get best quality
-                    best_media = medias[0]
-                    
+                for fmt in formats:
+                    if fmt.get('hasAudio') and fmt.get('hasVideo'):
+                        if not best_format or fmt.get('quality', 0) > best_format.get('quality', 0):
+                            best_format = fmt
+                
+                # If no combined format, try video-only
+                if not best_format:
+                    for fmt in formats:
+                        if fmt.get('hasVideo'):
+                            best_format = fmt
+                            break
+                
+                if best_format:
                     return {
                         'success': True,
-                        'title': data.get('title', 'YouTube Video'),
-                        'thumbnail': data.get('thumbnail'),
-                        'downloadUrl': best_media.get('url'),
-                        'quality': best_media.get('quality', 'HD'),
-                        'extension': best_media.get('extension', 'mp4'),
-                        'duration': 0,
-                        'filesize': best_media.get('size', 0),
-                        'source': 'rapidapi'
+                        'title': title,
+                        'thumbnail': thumbnail,
+                        'downloadUrl': best_format.get('url'),
+                        'quality': best_format.get('qualityLabel', 'HD'),
+                        'extension': best_format.get('mimeType', 'mp4').split('/')[-1].split(';')[0],
+                        'duration': data.get('lengthSeconds', 0),
+                        'filesize': best_format.get('contentLength', 0),
+                        'source': 'rapidapi-new'
                     }
         
         return None
         
     except Exception as e:
-        logger.error(f"RapidAPI error: {str(e)}")
+        logger.error(f"NEW RapidAPI error: {str(e)}")
         return None
 
 def extract_with_ytdlp(url):
@@ -120,16 +167,16 @@ def extract_video():
         
         # Route based on platform
         if is_youtube_url(url):
-            # Try RapidAPI for YouTube
+            # Try NEW RapidAPI for YouTube
             result = extract_with_rapidapi(url)
             
             if result:
-                logger.info("Success via RapidAPI")
+                logger.info("Success via NEW RapidAPI")
                 return jsonify(result)
             else:
                 return jsonify({
                     'success': False,
-                    'error': 'YouTube extraction failed. Video may be unavailable.'
+                    'error': 'YouTube extraction failed. Video may be private or unavailable.'
                 }), 500
         else:
             # Use yt-dlp for other platforms
