@@ -19,7 +19,7 @@ def home():
     return jsonify({
         'status': 'ok',
         'message': 'Video Extractor API is running',
-        'version': '4.0.1 - Fixed Status Check'
+        'version': '5.0.0 - Multiple Qualities'
     })
 
 def is_youtube_url(url):
@@ -28,7 +28,7 @@ def is_youtube_url(url):
     return any(domain in url.lower() for domain in youtube_domains)
 
 def extract_with_rapidapi(url):
-    """Extract video using Social Download All In One API"""
+    """Extract video using Social Download All In One API - Returns ALL qualities"""
     try:
         logger.info(f"Using Social Download API for: {url}")
         
@@ -45,27 +45,39 @@ def extract_with_rapidapi(url):
         response = requests.post(api_url, json=payload, headers=headers, timeout=30)
         
         logger.info(f"API Status: {response.status_code}")
-        logger.info(f"API Response: {response.text[:500]}")
         
         if response.status_code == 200:
             data = response.json()
             
-            # Check if we have medias array (this API doesn't send "status": "success")
+            # Get all medias
             medias = data.get('medias', [])
             
             if medias and len(medias) > 0:
-                # Get best quality (first one is usually best)
-                best_media = medias[0]
+                # Convert all medias to quality options
+                qualities = []
+                
+                for media in medias:
+                    quality_label = media.get('quality', 'Unknown')
+                    
+                    # Determine if audio only
+                    is_audio = 'audio' in quality_label.lower() or media.get('type') == 'audio'
+                    
+                    qualities.append({
+                        'url': media.get('url'),
+                        'quality': quality_label,
+                        'extension': media.get('extension', 'mp4'),
+                        'size': media.get('size', 0),
+                        'isAudio': is_audio,
+                        'width': media.get('width', 0),
+                        'height': media.get('height', 0)
+                    })
                 
                 return {
                     'success': True,
                     'title': data.get('title', 'Video'),
                     'thumbnail': data.get('thumbnail'),
-                    'downloadUrl': best_media.get('url'),
-                    'quality': best_media.get('quality', 'HD'),
-                    'extension': best_media.get('extension', 'mp4'),
                     'duration': data.get('duration', 0),
-                    'filesize': best_media.get('size', 0),
+                    'qualities': qualities,
                     'source': 'rapidapi'
                 }
             else:
@@ -82,7 +94,7 @@ def extract_with_rapidapi(url):
         return None
 
 def extract_with_ytdlp(url):
-    """Extract video using yt-dlp (fallback for non-YouTube platforms)"""
+    """Extract video using yt-dlp - Returns single best quality"""
     try:
         logger.info(f"Using yt-dlp for: {url}")
         
@@ -102,11 +114,16 @@ def extract_with_ytdlp(url):
                 'success': True,
                 'title': info.get('title', 'video'),
                 'thumbnail': info.get('thumbnail'),
-                'downloadUrl': info.get('url'),
-                'quality': info.get('format', 'Best Quality (HD + Audio)'),
-                'extension': info.get('ext', 'mp4'),
                 'duration': info.get('duration', 0),
-                'filesize': info.get('filesize', 0),
+                'qualities': [{
+                    'url': info.get('url'),
+                    'quality': 'Best Quality (HD + Audio)',
+                    'extension': info.get('ext', 'mp4'),
+                    'size': info.get('filesize', 0),
+                    'isAudio': False,
+                    'width': info.get('width', 0),
+                    'height': info.get('height', 0)
+                }],
                 'source': 'ytdlp'
             }
             
@@ -128,14 +145,14 @@ def extract_video():
         
         logger.info(f"Processing URL: {url}")
         
-        # Try RapidAPI first for all platforms (YouTube, Instagram, TikTok, Facebook)
+        # Try RapidAPI first for all platforms
         result = extract_with_rapidapi(url)
         
         if result:
-            logger.info(f"Success via RapidAPI: {result.get('title')}")
+            logger.info(f"Success via RapidAPI: {result.get('title')}, {len(result.get('qualities', []))} qualities")
             return jsonify(result)
         
-        # Fallback to yt-dlp for non-YouTube platforms if RapidAPI fails
+        # Fallback to yt-dlp for non-YouTube platforms
         if not is_youtube_url(url):
             logger.info("RapidAPI failed, trying yt-dlp fallback...")
             result = extract_with_ytdlp(url)
