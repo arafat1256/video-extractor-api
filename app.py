@@ -11,7 +11,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # RapidAPI credentials for YouTube fallback
-RAPIDAPI_KEY = "01895d9745msha194600cb99baebp130d5djsn2bae2cf551d8"
+RAPIDAPI_KEY = "8323c19993msh133999b087688ffp15533fjsn39a277015a81"
 RAPIDAPI_HOST = "social-download-all-in-one.p.rapidapi.com"
 
 @app.route('/')
