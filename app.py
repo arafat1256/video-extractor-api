@@ -19,7 +19,7 @@ def home():
     return jsonify({
         'status': 'ok',
         'message': 'Video Extractor API is running',
-        'version': '4.0.0 - Social Download All In One'
+        'version': '4.0.1 - Fixed Status Check'
     })
 
 def is_youtube_url(url):
@@ -50,29 +50,26 @@ def extract_with_rapidapi(url):
         if response.status_code == 200:
             data = response.json()
             
-            # Check if successful
-            if data.get('status') == 'success':
-                medias = data.get('medias', [])
+            # Check if we have medias array (this API doesn't send "status": "success")
+            medias = data.get('medias', [])
+            
+            if medias and len(medias) > 0:
+                # Get best quality (first one is usually best)
+                best_media = medias[0]
                 
-                if medias and len(medias) > 0:
-                    # Get best quality (first one is usually best)
-                    best_media = medias[0]
-                    
-                    return {
-                        'success': True,
-                        'title': data.get('title', 'Video'),
-                        'thumbnail': data.get('thumbnail'),
-                        'downloadUrl': best_media.get('url'),
-                        'quality': best_media.get('quality', 'HD'),
-                        'extension': best_media.get('extension', 'mp4'),
-                        'duration': data.get('duration', 0),
-                        'filesize': best_media.get('size', 0),
-                        'source': 'rapidapi'
-                    }
-                else:
-                    logger.error("No media items found in response")
+                return {
+                    'success': True,
+                    'title': data.get('title', 'Video'),
+                    'thumbnail': data.get('thumbnail'),
+                    'downloadUrl': best_media.get('url'),
+                    'quality': best_media.get('quality', 'HD'),
+                    'extension': best_media.get('extension', 'mp4'),
+                    'duration': data.get('duration', 0),
+                    'filesize': best_media.get('size', 0),
+                    'source': 'rapidapi'
+                }
             else:
-                logger.error(f"API returned error status: {data.get('status')}")
+                logger.error("No media items found in response")
         else:
             logger.error(f"API request failed with status {response.status_code}")
         
